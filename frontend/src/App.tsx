@@ -16,7 +16,7 @@ import PredictionPanel from './components/PredictionPanel';
 import PerformancePanel from './components/PerformancePanel';
 import ComparisonPanel from './components/ComparisonPanel';
 import ControlPanel from './components/ControlPanel';
-import type { websocketService, Trade, PredictionResult } from './services/websocket';
+import { websocketService, type Trade, type PredictionResult } from './services/websocket';
 
 const theme = createTheme({
   palette: {

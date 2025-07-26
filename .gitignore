@@ -1,0 +1,8 @@
+backend/ml-prediction/enhanced_ensemble_wash_trade_detector.pkl
+backend/ml-prediction/predictions.db
+backend/models/enhanced_ensemble_wash_trade_detector.pkl
+backend/models/Random_Forest_phase1.pkl
+backend/models/scaler_phase1.pkl
+backend/trade-ingestion/__pycache__/trade_generator.cpython-312.pyc
+backend/trade-ingestion/__pycache__/models.cpython-312.pyc
+backend/trade-ingestion/test_data_5pct_stratified.csv

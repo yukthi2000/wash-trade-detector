@@ -9,6 +9,8 @@ import {
   CssBaseline,
   ThemeProvider,
   createTheme,
+  Alert,
+  Snackbar,
 } from '@mui/material';
 import { Security } from '@mui/icons-material';
 import LiveTradePanel from './components/LiveTradePanel';
@@ -16,6 +18,7 @@ import PredictionPanel from './components/PredictionPanel';
 import PerformancePanel from './components/PerformancePanel';
 import ComparisonPanel from './components/ComparisonPanel';
 import ControlPanel from './components/ControlPanel';
+import ConnectionStatus from './components/ConnectionStatus';
 import { websocketService, type Trade, type PredictionResult } from './services/websocket';
 
 const theme = createTheme({
@@ -36,25 +39,47 @@ function App() {
   const [latestPrediction, setLatestPrediction] = useState<PredictionResult | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
   const [confidenceThreshold, setConfidenceThreshold] = useState(0.5);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Connect to WebSocket services
-    websocketService.connectToTrades((trade: Trade) => {
-      setTrades(prev => [...prev.slice(-100), trade]); // Keep last 100 trades
-    });
+    console.log('Initializing WebSocket connections...');
+    
+    // Connect to trade stream
+    websocketService.connectToTrades(
+      (trade: Trade) => {
+        console.log('Received trade:', trade.transactionHash?.slice(0, 10));
+        setTrades(prev => [...prev.slice(-100), trade]);
+      },
+      (error) => {
+        console.error('Trade WebSocket error:', error);
+        setError('Trade connection failed');
+      }
+    );
 
-    websocketService.connectToPredictions((prediction: PredictionResult) => {
-      setPredictions(prev => ({
-        ...prev,
-        [prediction.transaction_hash]: prediction
-      }));
-      setLatestPrediction(prediction);
-    });
+    // Connect to prediction stream
+    websocketService.connectToPredictions(
+      (prediction: PredictionResult) => {
+        console.log('Received prediction:', prediction.transaction_hash?.slice(0, 10), prediction.predicted_label);
+        setPredictions(prev => ({
+          ...prev,
+          [prediction.transaction_hash]: prediction
+        }));
+        setLatestPrediction(prediction);
+      },
+      (error) => {
+        console.error('Prediction WebSocket error:', error);
+        setError('Prediction connection failed');
+      }
+    );
 
     return () => {
       websocketService.disconnect();
     };
   }, []);
+
+  const handleCloseError = () => {
+    setError(null);
+  };
 
   return (
     <ThemeProvider theme={theme}>
@@ -65,6 +90,9 @@ function App() {
           <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
             Wash Trade Detection System - Real-time Demo
           </Typography>
+          <Box sx={{ mr: 2 }}>
+            <ConnectionStatus />
+          </Box>
           <Typography variant="body2">
             ML Model: Random Forest | Status: {isStreaming ? 'Active' : 'Stopped'}
           </Typography>
@@ -104,6 +132,18 @@ function App() {
           </Grid>
         </Grid>
       </Container>
+
+      {/* Error Snackbar */}
+      <Snackbar
+        open={!!error}
+        autoHideDuration={6000}
+        onClose={handleCloseError}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+      >
+        <Alert onClose={handleCloseError} severity="error" sx={{ width: '100%' }}>
+          {error}
+        </Alert>
+      </Snackbar>
     </ThemeProvider>
   );
 }

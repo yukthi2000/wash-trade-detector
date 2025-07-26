@@ -24,17 +24,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Redis connection
-try:
-    redis_client = redis.Redis(host='localhost', port=6379, decode_responses=True)
-    redis_client.ping()
-    logger.info("Connected to Redis")
-except Exception as e:
-    logger.error(f"Redis connection failed: {e}")
-    redis_client = None
+# Redis connection with error handling
+def get_redis_client():
+    try:
+        client = redis.Redis(host='localhost', port=6379, decode_responses=True)
+        client.ping()
+        logger.info("Connected to Redis")
+        return client
+    except Exception as e:
+        logger.error(f"Redis connection failed: {e}")
+        return None
+
+redis_client = get_redis_client()
 
 # Trade generator
-trade_generator = TradeGenerator()  # Add CSV path here if available
+trade_generator = TradeGenerator()
 
 # WebSocket connections
 class ConnectionManager:
@@ -47,15 +51,22 @@ class ConnectionManager:
         logger.info(f"Client connected. Total connections: {len(self.active_connections)}")
 
     def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
         logger.info(f"Client disconnected. Total connections: {len(self.active_connections)}")
 
     async def broadcast(self, message: str):
+        disconnected = []
         for connection in self.active_connections:
             try:
                 await connection.send_text(message)
             except Exception as e:
                 logger.error(f"Error sending message: {e}")
+                disconnected.append(connection)
+        
+        # Remove disconnected clients
+        for conn in disconnected:
+            self.disconnect(conn)
 
 manager = ConnectionManager()
 
@@ -66,27 +77,42 @@ streaming_active = False
 async def root():
     return {"message": "Trade Ingestion Service", "status": "running"}
 
+@app.get("/health")
+async def health():
+    return {
+        "status": "healthy",
+        "redis_connected": redis_client is not None,
+        "active_connections": len(manager.active_connections),
+        "streaming": streaming_active
+    }
+
 @app.post("/start-streaming")
 async def start_streaming():
     global streaming_active
-    streaming_active = True
-    asyncio.create_task(stream_trades())
-    return {"message": "Streaming started"}
+    if not streaming_active:
+        streaming_active = True
+        asyncio.create_task(stream_trades())
+    return {"message": "Streaming started", "status": streaming_active}
 
 @app.post("/stop-streaming")
 async def stop_streaming():
     global streaming_active
     streaming_active = False
-    return {"message": "Streaming stopped"}
+    return {"message": "Streaming stopped", "status": streaming_active}
 
 @app.websocket("/ws/trades")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
     try:
         while True:
-            # Keep connection alive
-            await websocket.receive_text()
+            # Keep connection alive by receiving ping messages
+            data = await websocket.receive_text()
+            if data == "ping":
+                await websocket.send_text("pong")
     except WebSocketDisconnect:
+        manager.disconnect(websocket)
+    except Exception as e:
+        logger.error(f"WebSocket error: {e}")
         manager.disconnect(websocket)
 
 async def stream_trades():
@@ -100,15 +126,19 @@ async def stream_trades():
             trade = trade_generator.generate_realistic_trade()
             trade_json = trade.to_json()
             
-            # Send to Redis queue
+            # Send to Redis queue if available
             if redis_client:
-                redis_client.lpush("trade_queue", trade_json)
+                try:
+                    redis_client.lpush("trade_queue", trade_json)
+                except Exception as e:
+                    logger.error(f"Redis error: {e}")
             
             # Broadcast to WebSocket clients
-            await manager.broadcast(trade_json)
+            if manager.active_connections:
+                await manager.broadcast(trade_json)
             
-            # Wait before next trade (adjust for desired frequency)
-            await asyncio.sleep(1.0)  # 1 trade per second
+            # Wait before next trade
+            await asyncio.sleep(1.0)
             
         except Exception as e:
             logger.error(f"Error in trade streaming: {e}")

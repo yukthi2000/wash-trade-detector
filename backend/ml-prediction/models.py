@@ -15,6 +15,7 @@ class PredictionResult(Base):
     predicted_label = Column(Integer)  # 0 or 1
     prediction_probability = Column(Float)  # 0.0 to 1.0
     processing_time_ms = Column(Float)
+    prediction_method = Column(String)  # "basic_ensemble", "full_ensemble", "error"
     timestamp = Column(DateTime, default=datetime.utcnow)
     
     # Trade features for analysis
@@ -22,6 +23,8 @@ class PredictionResult(Base):
     trade_amount_dollar = Column(Float)
     eth_buyer_id = Column(Integer)
     eth_seller_id = Column(Integer)
+    eth_seller = Column(String)  # Added for address tracking
+    eth_buyer = Column(String)   # Added for address tracking
 
 class PredictionResponse(BaseModel):
     transaction_hash: str
@@ -29,6 +32,7 @@ class PredictionResponse(BaseModel):
     predicted_label: int
     prediction_probability: float
     processing_time_ms: float
+    prediction_method: str  # Added to track which ensemble method was used
     agreement: bool
     confidence_level: str  # "High", "Medium", "Low"
     
@@ -41,6 +45,8 @@ class PerformanceMetrics(BaseModel):
     wash_predictions: int
     normal_predictions: int
     agreement_rate: float
+    basic_ensemble_count: int  # Added
+    full_ensemble_count: int   # Added
     
 class ComparisonBreakdown(BaseModel):
     both_wash: int  # True=1, Pred=1

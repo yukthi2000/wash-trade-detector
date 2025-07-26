@@ -1,122 +1,90 @@
-import joblib
-import pandas as pd
 import numpy as np
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
-import logging
-from typing import Dict, Any, Tuple
+import pandas as pd
+import joblib
 import time
+from typing import Dict, Any, Tuple
+import logging
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("ml_service")
+logger.setLevel(logging.INFO)
 
-class MLPredictionService:
-    def __init__(self, model_path: str, scaler_path: str):
-        self.model = None
-        self.scaler = None
-        self.feature_columns = [
-            'cut', 'blockNumber', 'timestamp', 'ether', 'token',
-            'trade_amount_eth', 'trade_amount_dollar', 'trade_amount_token',
-            'token_price_in_eth', 'eth_buyer_id', 'eth_seller_id'
-        ]
-        
-        try:
-            self.model = joblib.load(model_path)
-            self.scaler = joblib.load(scaler_path)
-            logger.info("ML model and scaler loaded successfully")
-        except Exception as e:
-            logger.error(f"Error loading model: {e}")
-            raise
-    
-    def prepare_features(self, trade_data: Dict[str, Any]) -> pd.DataFrame:
-        """Prepare features for prediction"""
-        try:
-            # Create DataFrame with required features
-            features = {}
-            for col in self.feature_columns:
-                if col in trade_data:
-                    features[col] = [trade_data[col]]
-                else:
-                    # Handle missing features with defaults
-                    features[col] = [0.0]
-            
-            df = pd.DataFrame(features)
-            
-            # Apply scaling
-            if self.scaler:
-                df_scaled = pd.DataFrame(
-                    self.scaler.transform(df),
-                    columns=df.columns
-                )
-                return df_scaled
-            
-            return df
-            
-        except Exception as e:
-            logger.error(f"Error preparing features: {e}")
-            raise
-    
-    def predict(self, trade_data: Dict[str, Any]) -> Tuple[int, float, float]:
-        """
-        Make prediction on trade data
-        Returns: (predicted_label, probability, processing_time_ms)
-        """
+class EnsembleMLPredictionService:
+    def __init__(self, model_path):
+        # Load ensemble model package
+        package = joblib.load(model_path)
+        self.neural_network_basic = package['neural_network_basic']
+        self.xgboost_basic = package['xgboost_basic']
+        self.random_forest_advanced = package['random_forest_advanced']
+        self.xgboost_advanced = package['xgboost_advanced']
+        self.scaler_basic = package['scaler_basic']
+        self.meta_learner = package['meta_learner']
+        self.basic_features = package['basic_features']
+        self.advanced_features = package['advanced_features']
+
+        # Global medians for missing advanced features
+        self.global_adv_medians = package.get('global_adv_medians', None)
+        if self.global_adv_medians is None:
+            logger.warning("No global medians found in model package. Using 0 for all advanced features.")
+            self.global_adv_medians = {feat: 0 for feat in self.advanced_features}
+
+    def _prepare_basic_features(self, trade_data: Dict[str, Any]) -> np.ndarray:
+        """Prepare and scale basic features as numpy array."""
+        data = {feat: trade_data.get(feat, 0) for feat in self.basic_features}
+        df = pd.DataFrame([data])
+        df = df.replace([np.inf, -np.inf], np.nan)
+        df = df.fillna(df.median())
+        return self.scaler_basic.transform(df)
+
+
+
+
+    def _prepare_advanced_features(self, trade_data: Dict[str, Any]) -> np.ndarray:
+        """Prepare advanced features as numpy array, filling missing with medians."""
+        data = {}
+        for feat in self.advanced_features:
+            value = trade_data.get(feat, None)
+            if value is None or value == '' or value == np.inf or value == -np.inf or pd.isnull(value):
+                value = self.global_adv_medians.get(feat, 0)
+            data[feat] = value
+        df = pd.DataFrame([data])
+        df = df.replace([np.inf, -np.inf], np.nan)
+        df = df.fillna(df.median())
+        return df.values
+
+    def predict(self, trade_data: Dict[str, Any]) -> Tuple[int, float, float, str]:
+        """Predict using all four models and the stacking meta-learner (always 'full_ensemble')."""
         start_time = time.time()
-        
         try:
             # Prepare features
-            features_df = self.prepare_features(trade_data)
-            
-            # Make prediction
-            prediction = self.model.predict(features_df)[0]
-            prediction_proba = self.model.predict_proba(features_df)[0]
-            
-            # Get probability for wash trade (class 1)
-            wash_probability = prediction_proba[1] if len(prediction_proba) > 1 else prediction_proba[0]
-            
-            processing_time = (time.time() - start_time) * 1000  # Convert to ms
-            
-            return int(prediction), float(wash_probability), processing_time
-            
+            basic_features = self._prepare_basic_features(trade_data)
+            advanced_features = self._prepare_advanced_features(trade_data)
+
+            # Four base model probabilities
+            nn_proba = self.neural_network_basic.predict_proba(basic_features)[0, 1]
+            xgb_basic_proba = self.xgboost_basic.predict_proba(basic_features)[0, 1]
+            rf_proba = self.random_forest_advanced.predict_proba(advanced_features)[0, 1]
+            xgb_advanced_proba = self.xgboost_advanced.predict_proba(advanced_features)[0, 1]
+
+            # Meta features for stacking
+            meta_features = np.array([[nn_proba, xgb_basic_proba, rf_proba, xgb_advanced_proba]])
+            final_probability = self.meta_learner.predict_proba(meta_features)[0, 1]
+            final_prediction = int(final_probability > 0.5)
+            processing_time = (time.time() - start_time) * 1000
+
+            return final_prediction, float(final_probability), processing_time, "full_ensemble"
+
         except Exception as e:
             logger.error(f"Error making prediction: {e}")
             processing_time = (time.time() - start_time) * 1000
-            return 0, 0.0, processing_time
-    
-    def get_confidence_level(self, probability: float) -> str:
-        """Determine confidence level based on probability"""
-        if probability >= 0.8 or probability <= 0.2:
-            return "High"
-        elif probability >= 0.6 or probability <= 0.4:
-            return "Medium"
-        else:
-            return "Low"
-    
-    def calculate_metrics(self, true_labels: list, predicted_labels: list) -> Dict[str, float]:
-        """Calculate performance metrics"""
-        if len(true_labels) == 0:
-            return {
-                'accuracy': 0.0,
-                'precision': 0.0,
-                'recall': 0.0,
-                'f1_score': 0.0
-            }
-        
-        try:
-            accuracy = accuracy_score(true_labels, predicted_labels)
-            precision = precision_score(true_labels, predicted_labels, zero_division=0)
-            recall = recall_score(true_labels, predicted_labels, zero_division=0)
-            f1 = f1_score(true_labels, predicted_labels, zero_division=0)
-            
-            return {
-                'accuracy': float(accuracy),
-                'precision': float(precision),
-                'recall': float(recall),
-                'f1_score': float(f1)
-            }
-        except Exception as e:
-            logger.error(f"Error calculating metrics: {e}")
-            return {
-                'accuracy': 0.0,
-                'precision': 0.0,
-                'recall': 0.0,
-                'f1_score': 0.0
-            }
+            return 0, 0.0, processing_time, "error"
+
+    def calculate_metrics(self, y_true, y_pred):
+        """Returns a metrics dict compatible with /metrics endpoint."""
+        from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+        metrics = {
+            "accuracy": accuracy_score(y_true, y_pred),
+            "precision": precision_score(y_true, y_pred, zero_division=0),
+            "recall": recall_score(y_true, y_pred, zero_division=0),
+            "f1_score": f1_score(y_true, y_pred, zero_division=0)
+        }
+        return metrics

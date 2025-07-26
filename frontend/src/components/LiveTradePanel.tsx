@@ -34,11 +34,11 @@ const LiveTradePanel: React.FC<LiveTradePanelProps> = ({ trades, predictions }) 
   };
 
   return (
-    <Paper sx={{ p: 2, height: '400px', overflow: 'auto' }}>
+    <Paper sx={{ p: 2, height: '800px', overflow: 'auto' }}>
       <Typography variant="h6" gutterBottom>
         Live Trade Stream
       </Typography>
-      <TableContainer sx={{ maxHeight: '350px' }}>
+      <TableContainer sx={{ maxHeight: '750px' }}>
         <Table stickyHeader size="small">
           <TableHead>
             <TableRow>
@@ -53,7 +53,7 @@ const LiveTradePanel: React.FC<LiveTradePanelProps> = ({ trades, predictions }) 
             </TableRow>
           </TableHead>
           <TableBody>
-            {trades.slice(-20).reverse().map((trade, index) => {
+            {trades.reverse().map((trade, index) => {
               const prediction = predictions[trade.transactionHash];
               return (
                 <TableRow key={`${trade.transactionHash}-${index}`}>

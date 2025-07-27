@@ -14,6 +14,10 @@ export const api = {
   stopProcessing: () => axios.post(`${ML_API_BASE}/stop-processing`),
   setThreshold: (threshold: number) => axios.post(`${ML_API_BASE}/set-threshold/${threshold}`),
   
+  // Health checks
+  getHealth: () => axios.get(`${ML_API_BASE}/health`),
+  getModelInfo: () => axios.get(`${ML_API_BASE}/model-info`),
+  
   getMetrics: (): Promise<{ data: PerformanceMetrics }> => 
     axios.get(`${ML_API_BASE}/metrics`),
   

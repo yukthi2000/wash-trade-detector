@@ -10,13 +10,13 @@ from ml_service import MLPredictionService
 from models import Base, PredictionResult, PredictionResponse, PerformanceMetrics, ComparisonBreakdown
 from typing import List, Dict
 import uvicorn
-from collections import defaultdict
+import os
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="ML Prediction Service")
+app = FastAPI(title="XGBoost ML Prediction Service")
 
 # CORS middleware
 app.add_middleware(
@@ -40,24 +40,45 @@ def get_db():
     finally:
         db.close()
 
-# Redis connection
-try:
-    redis_client = redis.Redis(host='localhost', port=6379, decode_responses=True)
-    redis_client.ping()
-    logger.info("Connected to Redis")
-except Exception as e:
-    logger.error(f"Redis connection failed: {e}")
-    redis_client = None
+# Redis connection with error handling
+def get_redis_client():
+    try:
+        client = redis.Redis(host='localhost', port=6379, decode_responses=True)
+        client.ping()
+        logger.info("Connected to Redis")
+        return client
+    except Exception as e:
+        logger.error(f"Redis connection failed: {e}")
+        return None
 
-# ML Service
-try:
-    ml_service = MLPredictionService(
-        model_path="../models/Random_Forest_phase1.pkl",
-        scaler_path="../models/scaler_phase1.pkl"
-    )
-except Exception as e:
-    logger.error(f"Failed to initialize ML service: {e}")
-    ml_service = None
+redis_client = get_redis_client()
+
+# ML Service with XGBoost model
+def initialize_ml_service():
+    # Updated paths for XGBoost model
+    model_paths = [
+        "XGBoost_phase1.pkl",
+
+  
+    ]
+    
+    for model_path in model_paths:
+        if os.path.exists(model_path):
+            try:
+                service = MLPredictionService(model_path)
+                logger.info(f"XGBoost ML service initialized with model: {model_path}")
+                model_info = service.get_model_info()
+                logger.info(f"Model info: {model_info}")
+                return service
+            except Exception as e:
+                logger.error(f"Failed to load XGBoost model {model_path}: {e}")
+                continue
+    
+    logger.error("Could not initialize XGBoost ML service - no valid model files found")
+    logger.info("Expected model file: xgb_final.pkl")
+    return None
+
+ml_service = initialize_ml_service()
 
 # WebSocket connections
 class ConnectionManager:
@@ -67,16 +88,25 @@ class ConnectionManager:
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
         self.active_connections.append(websocket)
+        logger.info(f"Prediction client connected. Total connections: {len(self.active_connections)}")
 
     def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
+        logger.info(f"Prediction client disconnected. Total connections: {len(self.active_connections)}")
 
     async def broadcast(self, message: str):
+        disconnected = []
         for connection in self.active_connections:
             try:
                 await connection.send_text(message)
-            except:
-                pass
+            except Exception as e:
+                logger.error(f"Error sending prediction message: {e}")
+                disconnected.append(connection)
+        
+        # Remove disconnected clients
+        for conn in disconnected:
+            self.disconnect(conn)
 
 manager = ConnectionManager()
 
@@ -86,45 +116,102 @@ confidence_threshold = 0.5
 
 @app.get("/")
 async def root():
-    return {"message": "ML Prediction Service", "status": "running"}
+    model_info = ml_service.get_model_info() if ml_service else {"model_type": "Not loaded"}
+    return {
+        "message": "XGBoost ML Prediction Service", 
+        "status": "running",
+        "model": model_info
+    }
+
+@app.get("/health")
+async def health():
+    model_info = ml_service.get_model_info() if ml_service else None
+    return {
+        "status": "healthy",
+        "redis_connected": redis_client is not None,
+        "ml_service_loaded": ml_service is not None,
+        "model_info": model_info,
+        "active_connections": len(manager.active_connections),
+        "processing": processing_active,
+        "confidence_threshold": confidence_threshold
+    }
+
+@app.get("/model-info")
+async def get_model_info():
+    """Get detailed model information"""
+    if ml_service:
+        return ml_service.get_model_info()
+    else:
+        return {"error": "Model not loaded"}
 
 @app.post("/start-processing")
 async def start_processing():
     global processing_active
-    processing_active = True
-    asyncio.create_task(process_trades())
-    return {"message": "Processing started"}
+    if not processing_active:
+        processing_active = True
+        asyncio.create_task(process_trades())
+    return {"message": "XGBoost processing started", "status": processing_active}
 
 @app.post("/stop-processing")
 async def stop_processing():
     global processing_active
     processing_active = False
-    return {"message": "Processing stopped"}
+    return {"message": "XGBoost processing stopped", "status": processing_active}
 
 @app.post("/set-threshold/{threshold}")
 async def set_threshold(threshold: float):
     global confidence_threshold
     confidence_threshold = max(0.0, min(1.0, threshold))
-    return {"message": f"Threshold set to {confidence_threshold}"}
+    return {"message": f"Threshold set to {confidence_threshold}", "threshold": confidence_threshold}
+
+@app.post("/test-prediction")
+async def test_prediction(trade_data: dict):
+    """Test endpoint for making a single prediction"""
+    if not ml_service:
+        return {"error": "ML service not available"}
+    
+    try:
+        predicted_label, probability, processing_time = ml_service.predict(trade_data)
+        return {
+            "predicted_label": predicted_label,
+            "probability": probability,
+            "processing_time_ms": processing_time,
+            "confidence_level": ml_service.get_confidence_level(probability),
+            "model_type": "XGBoost"
+        }
+    except Exception as e:
+        return {"error": str(e)}
 
 @app.websocket("/ws/predictions")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
     try:
         while True:
-            await websocket.receive_text()
+            # Keep connection alive
+            data = await websocket.receive_text()
+            if data == "ping":
+                await websocket.send_text("pong")
     except WebSocketDisconnect:
+        manager.disconnect(websocket)
+    except Exception as e:
+        logger.error(f"Prediction WebSocket error: {e}")
         manager.disconnect(websocket)
 
 async def process_trades():
-    """Process trades from Redis queue and make predictions"""
+    """Process trades from Redis queue and make XGBoost predictions"""
     global processing_active
-    logger.info("Starting trade processing...")
+    logger.info("Starting XGBoost trade processing...")
     
     while processing_active:
         try:
-            if not redis_client or not ml_service:
-                await asyncio.sleep(1.0)
+            if not redis_client:
+                logger.warning("Redis not available, retrying...")
+                await asyncio.sleep(5.0)
+                continue
+                
+            if not ml_service:
+                logger.warning("XGBoost ML service not available, retrying...")
+                await asyncio.sleep(5.0)
                 continue
             
             # Get trade from queue
@@ -134,15 +221,13 @@ async def process_trades():
                 continue
             
             trade_data = json.loads(trade_json)
+            logger.info(f"Processing trade with XGBoost: {trade_data.get('transactionHash', 'unknown')[:10]}...")
             
-            # Make prediction
+            # Make XGBoost prediction
             predicted_label, probability, processing_time = ml_service.predict(trade_data)
             
             # Apply threshold
-            if probability >= confidence_threshold:
-                final_prediction = 1
-            else:
-                final_prediction = 0
+            final_prediction = 1 if probability >= confidence_threshold else 0
             
             # Store result in database
             db = SessionLocal()
@@ -160,6 +245,10 @@ async def process_trades():
                 )
                 db.add(result)
                 db.commit()
+                logger.info(f"Stored XGBoost prediction for {trade_data.get('transactionHash', 'unknown')[:10]}")
+            except Exception as e:
+                logger.error(f"Database error: {e}")
+                db.rollback()
             finally:
                 db.close()
             
@@ -175,12 +264,15 @@ async def process_trades():
             )
             
             # Broadcast to WebSocket clients
-            await manager.broadcast(response.json())
+            if manager.active_connections:
+                await manager.broadcast(response.model_dump_json())
+                logger.info(f"Broadcasted XGBoost prediction: {final_prediction} (prob: {probability:.3f})")
             
         except Exception as e:
-            logger.error(f"Error processing trade: {e}")
+            logger.error(f"Error processing trade with XGBoost: {e}")
             await asyncio.sleep(1.0)
 
+# Keep all your existing endpoints (metrics, comparison, etc.)
 @app.get("/metrics", response_model=PerformanceMetrics)
 async def get_metrics(db: Session = Depends(get_db)):
     """Get current performance metrics"""
@@ -197,7 +289,10 @@ async def get_metrics(db: Session = Depends(get_db)):
         true_labels = [r.true_label for r in results]
         predicted_labels = [r.predicted_label for r in results]
         
-        metrics = ml_service.calculate_metrics(true_labels, predicted_labels)
+        if ml_service:
+            metrics = ml_service.calculate_metrics(true_labels, predicted_labels)
+        else:
+            metrics = {'accuracy': 0.0, 'precision': 0.0, 'recall': 0.0, 'f1_score': 0.0}
         
         total_predictions = len(results)
         wash_predictions = sum(predicted_labels)
@@ -250,7 +345,7 @@ async def get_comparison(db: Session = Depends(get_db)):
 
 @app.on_event("startup")
 async def startup_event():
-    logger.info("ML Prediction Service started")
+    logger.info("XGBoost ML Prediction Service started")
     global processing_active
     processing_active = True
     asyncio.create_task(process_trades())

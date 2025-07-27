@@ -50,42 +50,113 @@ export interface ComparisonBreakdown {
 class WebSocketService {
   private tradeSocket: WebSocket | null = null;
   private predictionSocket: WebSocket | null = null;
+  private reconnectAttempts = 0;
+  private maxReconnectAttempts = 5;
+  private reconnectTimeout: number | null = null;
   
   connectToTrades(onMessage: (trade: Trade) => void) {
-    this.tradeSocket = new WebSocket('ws://localhost:8001/ws/trades');
-    
-    this.tradeSocket.onmessage = (event) => {
-      try {
-        const trade = JSON.parse(event.data);
-        onMessage(trade);
-      } catch (error) {
-        console.error('Error parsing trade data:', error);
-      }
-    };
-    
-    this.tradeSocket.onerror = (error) => {
-      console.error('Trade WebSocket error:', error);
-    };
+    try {
+      console.log('Connecting to trade WebSocket...');
+      this.tradeSocket = new WebSocket('ws://localhost:8001/ws/trades');
+      
+      this.tradeSocket.onopen = () => {
+        console.log('✅ Trade WebSocket connected');
+        this.reconnectAttempts = 0;
+        // Send a test message to keep connection alive
+        if (this.tradeSocket) {
+          this.tradeSocket.send('ping');
+        }
+      };
+      
+      this.tradeSocket.onmessage = (event) => {
+        try {
+          const trade = JSON.parse(event.data);
+          console.log('📦 Received trade:', trade.transactionHash);
+          onMessage(trade);
+        } catch (error) {
+          console.error('Error parsing trade data:', error);
+        }
+      };
+      
+      this.tradeSocket.onerror = (error) => {
+        console.error('❌ Trade WebSocket error:', error);
+      };
+      
+      this.tradeSocket.onclose = (event) => {
+        console.log('🔌 Trade WebSocket closed:', event.code, event.reason);
+        this.attemptReconnect('trades', onMessage);
+      };
+    } catch (error) {
+      console.error('Failed to connect to trade WebSocket:', error);
+    }
   }
   
   connectToPredictions(onMessage: (prediction: PredictionResult) => void) {
-    this.predictionSocket = new WebSocket('ws://localhost:8002/ws/predictions');
-    
-    this.predictionSocket.onmessage = (event) => {
-      try {
-        const prediction = JSON.parse(event.data);
-        onMessage(prediction);
-      } catch (error) {
-        console.error('Error parsing prediction data:', error);
-      }
-    };
-    
-    this.predictionSocket.onerror = (error) => {
-      console.error('Prediction WebSocket error:', error);
-    };
+    try {
+      console.log('Connecting to prediction WebSocket...');
+      this.predictionSocket = new WebSocket('ws://localhost:8002/ws/predictions');
+      
+      this.predictionSocket.onopen = () => {
+        console.log('✅ Prediction WebSocket connected');
+        this.reconnectAttempts = 0;
+        // Send a test message to keep connection alive
+        if (this.predictionSocket) {
+          this.predictionSocket.send('ping');
+        }
+      };
+      
+      this.predictionSocket.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          // Ignore ping messages
+          if (data.type === 'ping') {
+            return;
+          }
+          console.log('🔮 Received prediction:', data.transaction_hash);
+          onMessage(data);
+        } catch (error) {
+          console.error('Error parsing prediction data:', error);
+        }
+      };
+      
+      this.predictionSocket.onerror = (error) => {
+        console.error('❌ Prediction WebSocket error:', error);
+      };
+      
+      this.predictionSocket.onclose = (event) => {
+        console.log('🔌 Prediction WebSocket closed:', event.code, event.reason);
+        this.attemptReconnect('predictions', onMessage);
+      };
+    } catch (error) {
+      console.error('Failed to connect to prediction WebSocket:', error);
+    }
+  }
+  
+  private attemptReconnect(type: 'trades' | 'predictions', onMessage: any) {
+    if (this.reconnectAttempts < this.maxReconnectAttempts) {
+      this.reconnectAttempts++;
+      console.log(`🔄 Attempting to reconnect ${type} WebSocket (${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
+      
+      this.reconnectTimeout = setTimeout(() => {
+        if (type === 'trades') {
+          this.connectToTrades(onMessage);
+        } else {
+          this.connectToPredictions(onMessage);
+        }
+      }, 2000 * this.reconnectAttempts);
+    } else {
+      console.error(`❌ Max reconnection attempts reached for ${type} WebSocket`);
+    }
   }
   
   disconnect() {
+    console.log('🔌 Disconnecting WebSockets...');
+    
+    if (this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout);
+      this.reconnectTimeout = null;
+    }
+    
     if (this.tradeSocket) {
       this.tradeSocket.close();
       this.tradeSocket = null;
@@ -94,6 +165,7 @@ class WebSocketService {
       this.predictionSocket.close();
       this.predictionSocket = null;
     }
+    this.reconnectAttempts = 0;
   }
 }
 

@@ -1,4 +1,4 @@
-import joblib
+import pickle
 import pandas as pd
 import numpy as np
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
@@ -9,25 +9,27 @@ import time
 logger = logging.getLogger(__name__)
 
 class MLPredictionService:
-    def __init__(self, model_path: str, scaler_path: str):
+    def __init__(self, model_path: str):
         self.model = None
-        self.scaler = None
+        # Updated feature columns to match your training data
         self.feature_columns = [
-            'cut', 'blockNumber', 'timestamp', 'ether', 'token',
-            'trade_amount_eth', 'trade_amount_dollar', 'trade_amount_token',
-            'token_price_in_eth', 'eth_buyer_id', 'eth_seller_id'
+            'cut', 'blockNumber', 'timestamp', 'trade_amount_eth', 
+            'trade_amount_dollar', 'trade_amount_token', 'token_price_in_eth', 
+            'eth_buyer_id', 'eth_seller_id'
         ]
         
         try:
-            self.model = joblib.load(model_path)
-            self.scaler = joblib.load(scaler_path)
-            logger.info("ML model and scaler loaded successfully")
+            # Load the XGBoost model using pickle (as you saved it)
+            with open(model_path, 'rb') as f:
+                model_data = pickle.load(f)
+                self.model = model_data['model']
+            logger.info("XGBoost model loaded successfully")
         except Exception as e:
             logger.error(f"Error loading model: {e}")
             raise
     
     def prepare_features(self, trade_data: Dict[str, Any]) -> pd.DataFrame:
-        """Prepare features for prediction"""
+        """Prepare features for prediction - XGBoost doesn't need scaling"""
         try:
             # Create DataFrame with required features
             features = {}
@@ -36,17 +38,20 @@ class MLPredictionService:
                     features[col] = [trade_data[col]]
                 else:
                     # Handle missing features with defaults
-                    features[col] = [0.0]
+                    if col in ['cut', 'blockNumber', 'timestamp']:
+                        features[col] = [0.0]
+                    elif col in ['trade_amount_eth', 'trade_amount_dollar', 'trade_amount_token', 'token_price_in_eth']:
+                        features[col] = [0.0]
+                    elif col in ['eth_buyer_id', 'eth_seller_id']:
+                        features[col] = [0]
+                    else:
+                        features[col] = [0.0]
             
             df = pd.DataFrame(features)
             
-            # Apply scaling
-            if self.scaler:
-                df_scaled = pd.DataFrame(
-                    self.scaler.transform(df),
-                    columns=df.columns
-                )
-                return df_scaled
+            # Ensure correct data types
+            for col in ['eth_buyer_id', 'eth_seller_id']:
+                df[col] = df[col].astype(int)
             
             return df
             
@@ -56,13 +61,13 @@ class MLPredictionService:
     
     def predict(self, trade_data: Dict[str, Any]) -> Tuple[int, float, float]:
         """
-        Make prediction on trade data
+        Make prediction on trade data using XGBoost
         Returns: (predicted_label, probability, processing_time_ms)
         """
         start_time = time.time()
         
         try:
-            # Prepare features
+            # Prepare features (no scaling needed for XGBoost)
             features_df = self.prepare_features(trade_data)
             
             # Make prediction

@@ -19,6 +19,16 @@ interface LiveTradePanelProps {
 }
 
 const LiveTradePanel: React.FC<LiveTradePanelProps> = ({ trades, predictions }) => {
+  // Debug logging
+  React.useEffect(() => {
+    console.log('🔍 LiveTradePanel updated:', {
+      tradesCount: trades.length,
+      predictionsCount: Object.keys(predictions).length,
+      latestTrade: trades[trades.length - 1]?.transactionHash,
+      predictionKeys: Object.keys(predictions).slice(-5) // Last 5 prediction keys
+    });
+  }, [trades, predictions]);
+
   const getConfidenceColor = (confidence: string, agreement: boolean) => {
     if (!agreement) return 'error';
     switch (confidence) {
@@ -34,11 +44,14 @@ const LiveTradePanel: React.FC<LiveTradePanelProps> = ({ trades, predictions }) 
   };
 
   return (
-    <Paper sx={{ p: 2, height: '400px', overflow: 'auto' }}>
+    <Paper sx={{ p: 2, height: '550px', overflow: 'auto' }}>
       <Typography variant="h6" gutterBottom>
         Live Trade Stream
+        <Typography variant="caption" sx={{ ml: 2 }}>
+          ({trades.length} trades, {Object.keys(predictions).length} predictions)
+        </Typography>
       </Typography>
-      <TableContainer sx={{ maxHeight: '350px' }}>
+      <TableContainer sx={{ maxHeight: '450px' }}>
         <Table stickyHeader size="small">
           <TableHead>
             <TableRow>
@@ -53,11 +66,26 @@ const LiveTradePanel: React.FC<LiveTradePanelProps> = ({ trades, predictions }) 
             </TableRow>
           </TableHead>
           <TableBody>
-            {trades.slice(-20).reverse().map((trade, index) => {
+            {trades.reverse().map((trade, index) => {
               const prediction = predictions[trade.transactionHash];
+              
+              // Debug log for each trade
+              if (index < 3) { // Only log first 3 to avoid spam
+                console.log(`🔍 Trade ${trade.transactionHash}:`, {
+                  tradeHash: trade.transactionHash,
+                  hasPrediction: !!prediction,
+                  predictionHash: prediction?.transaction_hash,
+                  hashesMatch: trade.transactionHash === prediction?.transaction_hash
+                });
+              }
+              
               return (
-                <TableRow key={`${trade.transactionHash}-${index}`}>
-                  <TableCell>{formatAddress(trade.transactionHash)}</TableCell>
+                <TableRow key={trade.transactionHash}>
+                  <TableCell>
+                    <Typography variant="caption">
+                      {formatAddress(trade.transactionHash)}
+                    </Typography>
+                  </TableCell>
                   <TableCell>{formatAddress(trade.eth_seller)}</TableCell>
                   <TableCell>{formatAddress(trade.eth_buyer)}</TableCell>
                   <TableCell>{trade.trade_amount_eth.toFixed(4)}</TableCell>
@@ -76,25 +104,38 @@ const LiveTradePanel: React.FC<LiveTradePanelProps> = ({ trades, predictions }) 
                         size="small"
                       />
                     ) : (
-                      <Chip label="Pending" color="default" size="small" />
+                      <Chip 
+                        label="Pending" 
+                        color="default" 
+                        size="small"
+                        title={`Looking for prediction with hash: ${trade.transactionHash}`}
+                      />
                     )}
                   </TableCell>
                   <TableCell>
-                    {prediction && (
+                    {prediction ? (
                       <Chip
                         label={`${(prediction.prediction_probability * 100).toFixed(1)}%`}
                         color={getConfidenceColor(prediction.confidence_level, prediction.agreement)}
                         size="small"
                       />
+                    ) : (
+                      <Typography variant="caption" color="textSecondary">
+                        -
+                      </Typography>
                     )}
                   </TableCell>
                   <TableCell>
-                    {prediction && (
+                    {prediction ? (
                       <Chip
                         label={prediction.agreement ? '✓' : '✗'}
                         color={prediction.agreement ? 'success' : 'error'}
                         size="small"
                       />
+                    ) : (
+                      <Typography variant="caption" color="textSecondary">
+                        -
+                      </Typography>
                     )}
                   </TableCell>
                 </TableRow>

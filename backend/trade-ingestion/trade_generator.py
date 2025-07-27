@@ -1,5 +1,6 @@
 import random
 import time
+import uuid
 from datetime import datetime, timedelta
 from models import Trade
 import pandas as pd
@@ -10,6 +11,7 @@ class TradeGenerator:
         self.csv_file_path = csv_file_path
         self.csv_data = None
         self.csv_index = 0
+        self.used_hashes = set()  # Track used hashes
         
         if csv_file_path:
             try:
@@ -19,10 +21,30 @@ class TradeGenerator:
                 print(f"Error loading CSV: {e}")
                 self.csv_data = None
     
+    def _generate_unique_tx_hash(self) -> str:
+        """Generate a unique transaction hash"""
+        max_attempts = 10
+        for _ in range(max_attempts):
+            tx_hash = "0x" + "".join(random.choices("0123456789abcdef", k=64))
+            if tx_hash not in self.used_hashes:
+                self.used_hashes.add(tx_hash)
+                # Keep memory usage reasonable
+                if len(self.used_hashes) > 50000:
+                    # Remove oldest half
+                    hashes_list = list(self.used_hashes)
+                    self.used_hashes.clear()
+                    self.used_hashes.update(hashes_list[-25000:])
+                return tx_hash
+        
+        # Fallback: use timestamp + random
+        timestamp = str(int(time.time() * 1000000))  # microseconds
+        random_part = "".join(random.choices("0123456789abcdef", k=40))
+        return f"0x{timestamp[-24:]}{random_part}"
+    
     def generate_realistic_trade(self) -> Trade:
         """Generate a realistic cryptocurrency trade"""
         if self.csv_data is not None and self.csv_index < len(self.csv_data):
-            # Use CSV data
+            # Use CSV data but ensure unique hash
             row = self.csv_data.iloc[self.csv_index]
             self.csv_index += 1
             
@@ -33,7 +55,7 @@ class TradeGenerator:
                 cut=float(row.get('cut', random.uniform(1000000, 2000000))),
                 blockNumber=int(row.get('blockNumber', random.randint(9000000, 10000000))),
                 timestamp=int(row.get('timestamp', int(time.time()))),
-                transactionHash=str(row.get('transactionHash', self._generate_tx_hash())),
+                transactionHash=self._generate_unique_tx_hash(),  # Always generate unique
                 ether=float(row.get('ether', 0.0)),
                 token=float(row.get('token', random.uniform(1, 1000))),
                 trade_amount_eth=float(row.get('trade_amount_eth', random.uniform(0.1, 10.0))),
@@ -76,7 +98,7 @@ class TradeGenerator:
             cut=random.uniform(1000000, 2000000),
             blockNumber=random.randint(9000000, 10000000),
             timestamp=int(time.time()),
-            transactionHash=self._generate_tx_hash(),
+            transactionHash=self._generate_unique_tx_hash(),  # Use unique generator
             ether=0.0,
             token=random.uniform(1, 1000),
             trade_amount_eth=trade_amount,
@@ -91,7 +113,3 @@ class TradeGenerator:
     def _generate_address(self) -> str:
         """Generate a realistic Ethereum address"""
         return "0x" + "".join(random.choices("0123456789abcdef", k=40))
-    
-    def _generate_tx_hash(self) -> str:
-        """Generate a realistic transaction hash"""
-        return "0x" + "".join(random.choices("0123456789abcdef", k=64))

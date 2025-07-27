@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Paper,
   Typography,
@@ -32,16 +32,22 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
     setLoading(true);
     try {
       if (isStreaming) {
+        console.log('🛑 Stopping services...');
         await api.stopStreaming();
         await api.stopProcessing();
         setIsStreaming(false);
+        console.log('✅ Services stopped');
       } else {
+        console.log('▶️ Starting services...');
         await api.startStreaming();
         await api.startProcessing();
         setIsStreaming(true);
+        console.log('✅ Services started');
       }
     } catch (error) {
-      console.error('Error toggling streaming:', error);
+      console.error('❌ Error toggling streaming:', error);
+      // Reset state on error
+      setIsStreaming(false);
     } finally {
       setLoading(false);
     }
@@ -52,6 +58,7 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
     setConfidenceThreshold(threshold);
     try {
       await api.setThreshold(threshold);
+      console.log(`🎯 Threshold set to ${(threshold * 100).toFixed(0)}%`);
     } catch (error) {
       console.error('Error setting threshold:', error);
     }
@@ -59,7 +66,7 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
 
   const handleExport = () => {
     // In a real implementation, this would trigger a CSV download
-    console.log('Exporting results...');
+    console.log('📊 Exporting results...');
     alert('Export functionality would be implemented here');
   };
 
@@ -80,13 +87,17 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
               fullWidth
               sx={{ mb: 2 }}
             >
-              {isStreaming ? 'Stop Streaming' : 'Start Streaming'}
+              {loading 
+                ? (isStreaming ? 'Stopping...' : 'Starting...') 
+                : (isStreaming ? 'Stop Streaming' : 'Start Streaming')
+              }
             </Button>
             <Button
               variant="outlined"
               startIcon={<GetApp />}
               onClick={handleExport}
               fullWidth
+              disabled={loading}
             >
               Export Results
             </Button>
@@ -106,6 +117,7 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
               valueLabelDisplay="auto"
               valueLabelFormat={(value) => `${(value * 100).toFixed(0)}%`}
               sx={{ mb: 2 }}
+              disabled={loading}
             />
             <Box display="flex" justifyContent="space-between" alignItems="center">
               <Typography variant="body2" color="textSecondary">

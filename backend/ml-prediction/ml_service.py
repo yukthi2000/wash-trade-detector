@@ -125,3 +125,4 @@ class MLPredictionService:
                 'recall': 0.0,
                 'f1_score': 0.0
             }
+        

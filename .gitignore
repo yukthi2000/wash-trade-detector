@@ -7,3 +7,4 @@ backend/trade-ingestion/__pycache__/trade_generator.cpython-312.pyc
 backend/trade-ingestion/__pycache__/models.cpython-312.pyc
 backend/trade-ingestion/test_data_5pct_stratified.csv
 backend/ml-prediction/Random_Forest_phase1.pkl
+backend/ml-prediction/xgb_final.pkl

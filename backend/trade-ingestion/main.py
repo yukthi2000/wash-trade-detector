@@ -10,6 +10,7 @@ from typing import List
 import uvicorn
 # In your trade ingestion main.py
 import uuid
+import random
 from datetime import datetime
 
 # Add a set to track generated transaction hashes

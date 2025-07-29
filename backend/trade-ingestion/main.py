@@ -10,6 +10,7 @@ from typing import List
 import uvicorn
 # In your trade ingestion main.py
 import uuid
+import random
 from datetime import datetime
 
 # Add a set to track generated transaction hashes
@@ -39,7 +40,7 @@ except Exception as e:
     redis_client = None
 
 # Trade generator
-trade_generator = TradeGenerator()  # Add CSV path here if available
+trade_generator = TradeGenerator('test_data_5pct_stratified.csv')  # Add CSV path here if available
 
 # WebSocket connections
 class ConnectionManager:

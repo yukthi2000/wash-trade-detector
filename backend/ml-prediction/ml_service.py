@@ -5,6 +5,7 @@ from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_sc
 import logging
 from typing import Dict, Any, Tuple
 import time
+import joblib
 
 logger = logging.getLogger(__name__)
 
@@ -19,17 +20,40 @@ class MLPredictionService:
         ]
         
         try:
-            # Load the XGBoost model using pickle (as you saved it)
-            with open(model_path, 'rb') as f:
-                model_data = pickle.load(f)
-                self.model = model_data['model']
-            logger.info("XGBoost model loaded successfully")
+            # Try multiple loading methods for compatibility
+            self.model = self._load_model_with_fallback(model_path)
+            logger.info("Random Forest model loaded successfully")
         except Exception as e:
             logger.error(f"Error loading model: {e}")
             raise
     
+    def _load_model_with_fallback(self, model_path: str):
+        """Try multiple methods to load the model"""
+        loading_methods = [
+            # Method 1: Standard pickle
+            lambda path: pickle.load(open(path, 'rb')),
+            # Method 2: Joblib (recommended for sklearn models)
+            lambda path: joblib.load(path),
+            # Method 3: Pickle with different protocol
+            lambda path: pickle.load(open(path, 'rb'), encoding='latin1'),
+            # Method 4: Pickle with bytes mode
+            lambda path: pickle.load(open(path, 'rb'), fix_imports=True, encoding='bytes'),
+        ]
+        
+        for i, method in enumerate(loading_methods):
+            try:
+                logger.info(f"Trying loading method {i+1}...")
+                model = method(model_path)
+                logger.info(f"Successfully loaded model using method {i+1}")
+                return model
+            except Exception as e:
+                logger.warning(f"Loading method {i+1} failed: {e}")
+                continue
+        
+        raise Exception("All loading methods failed")
+    
     def prepare_features(self, trade_data: Dict[str, Any]) -> pd.DataFrame:
-        """Prepare features for prediction - XGBoost doesn't need scaling"""
+        """Prepare features for prediction - Random Forest doesn't need scaling"""
         try:
             # Create DataFrame with required features
             features = {}
@@ -61,13 +85,13 @@ class MLPredictionService:
     
     def predict(self, trade_data: Dict[str, Any]) -> Tuple[int, float, float]:
         """
-        Make prediction on trade data using XGBoost
+        Make prediction on trade data using Random Forest
         Returns: (predicted_label, probability, processing_time_ms)
         """
         start_time = time.time()
         
         try:
-            # Prepare features (no scaling needed for XGBoost)
+            # Prepare features (no scaling needed for Random Forest)
             features_df = self.prepare_features(trade_data)
             
             # Make prediction

@@ -118,7 +118,7 @@ function App() {
             Wash Trade Detection System - Real-time Demo
           </Typography>
           <Typography variant="body2">
-            ML Model: XGBoost | Status: {isStreaming ? 'Active' : 'Stopped'}
+            ML Model | Status: {isStreaming ? 'Active' : 'Stopped'}
           </Typography>
         </Toolbar>
       </AppBar>
